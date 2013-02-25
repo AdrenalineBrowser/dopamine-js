@@ -6,7 +6,7 @@
  */
 
 /**
- * Class: Plugins
+ * Class: plugins
  *
  * This is a collection of plugins we made available on the adrenaline
  * browser platform to extend html5.
@@ -14,35 +14,23 @@
 
 this.dopamine = this.dopamine || {};
 
-(function($) {
-    /*
-     * Initializes Plugins.
-     * Not meant to be used except from dopamine's main constructor
-     *
-     * Must be called with 'new'
-     */
-    function Plugins() {
-        if(arguments.callee._singletonInstance)
-            return arguments.callee._singletonInstance;
-        arguments.callee._singletonInstance = this;
-    }
-
+dopamine.plugins = (function(my, $) {
     /**
      * Function: requestFullscreen()
      *
      * Enter fullscreen mode
      */
-    Plugins.prototype.requestFullscreen = function(toast) {
+    my.requestFullscreen = function(toast) {
         var args = {
             toast : true,
             button : true
         };
 
-        if (typeof toast !== 'undefined') {
+        if (typeof toast !== "undefined") {
             args.toast = toast;
         }
 
-        dopamine.exec(null, null, 'FullScreenPlugin', 'requestFullscreen', [args]);
+        dopamine.exec(null, null, "FullScreenPlugin", "requestFullscreen", [args]);
     };
 
     /**
@@ -50,11 +38,9 @@ this.dopamine = this.dopamine || {};
      *
      * Exit fullscreen mode
      */
-    Plugins.prototype.cancelFullscreen = function() {
-        dopamine.exec(null, null, 'FullScreenPlugin', 'cancelFullscreen', []);
+    my.cancelFullscreen = function() {
+        dopamine.exec(null, null, "FullScreenPlugin", "cancelFullscreen", []);
     };
 
-    Object.defineProperty(dopamine, "plugins", {
-        get: function() { return new Plugins(); }
-    });
-})(jQuery);
+    return my;
+})(dopamine.plugins || {}, jQuery);

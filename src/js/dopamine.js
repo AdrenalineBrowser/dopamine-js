@@ -17,43 +17,26 @@
  *
  */
 
-/**
- * Initializes the top level Dopamine object.
- *
- * Automatically called when you load dopamine.js
- */
+this.dopamine = (function(dopamine, $) {
 
-this.dopamine = this.dopamine || {};
+    /* Internal */
+    dopamine.getAdrenaline = function() {
+        if (typeof window.adrenaline !== "undefined") {
+            return window.adrenaline;
+        } else {
+            return null;
+        }
+    };
 
-(function($) {
-    /**
-     * Note: we don't know what order the modules will be loaded in,
-     * so each module has to check if the dopamine object has been
-     * formed and defer allocation until first access to make sure
-     * that the dopamine namespace has been fully formed before trying
-     * to access features from it.
-     */
-
-    // XXX FIXME move this to the UI module...
-    Object.defineProperty(dopamine, "ui", {
-        get: function() { return new Ui(); }
-    });
-
-    // some basic dopamine top level interfaces that the browser uses
-    if(typeof window.adrenaline !== 'undefined') {
-        dopamine._adrenaline = window.adrenaline;
-    } else {
-        dopamine._adrenaline = null;
-    }
-
+    /* __ means this variable is used by native code */
     dopamine.__commandQueue = [];
 
     // We don't need this to be random because the browser keeps track
     // of things to avoid firing on the wrong ID, but we'll leave it
     // this way anyway.
-    dopamine._callbackId = Math.floor(Math.random() * 2000000000);
-    dopamine._callbacks = {};
-    dopamine._callbackStatus = {
+    var callbackId = Math.floor(Math.random() * 2000000000);
+    var callbacks = {};
+    var callbackStatus = {
         NO_RESULT: 0,
         OK: 1,
         CLASS_NOT_FOUND_EXCEPTION: 2,
@@ -65,8 +48,8 @@ this.dopamine = this.dopamine || {};
         JSON_EXCEPTION: 8,
         ERROR: 9
     };
-    dopamine._execIframe = null;
 
+    var iframe;
 
     /**
      * Called by native code when returning successful result from an action.
@@ -74,23 +57,23 @@ this.dopamine = this.dopamine || {};
      * @param callbackId
      * @param args
      */
-    dopamine.__callbackSuccess = function(callbackId, args) {
-        if (dopamine._callbacks[callbackId]) {
+    dopamine.__callbackSuccess = function(id, args) {
+        if (callbacks[id]) {
 
             // If result is to be sent to callback
-            if (args.status == dopamine._callbackStatus.OK) {
+            if (args.status === callbackStatus.OK) {
                 try {
-                    if (dopamine._callbacks[callbackId].success) {
-                        dopamine._callbacks[callbackId].success(args.message);
+                    if (callbacks[id].success) {
+                        callbacks[id].success(args.message);
                     }
                 } catch (e) {
-                    console.log("Error in success callback: "+callbackId+" = "+e);
+                    console.log("Error in success callback: "+id+" = "+e);
                 }
             }
 
             // Clear callback if not expecting any more results
             if (!args.keepCallback) {
-                delete dopamine._callbacks[callbackId];
+                delete callbacks[id];
             }
         }
     };
@@ -101,80 +84,76 @@ this.dopamine = this.dopamine || {};
      * @param callbackId
      * @param args
      */
-    dopamine.__callbackError = function(callbackId, args) {
-        if (dopamine._callbacks[callbackId]) {
+    dopamine.__callbackError = function(id, args) {
+        if (callbacks[id]) {
 
             try {
-                if (dopamine._callbacks[callbackId].fail) {
-                    dopamine._callbacks[callbackId].fail(args.message);
+                if (callbacks[id].fail) {
+                    callbacks[id].fail(args.message);
                 }
             } catch (e) {
-                console.log("Error in success callback: "+callbackId+" = "+e);
+                console.log("Error in success callback: " + id + " = " + e);
             }
 
             // Clear callback if not expecting any more results
             if (!args.keepCallback) {
-                delete dopamine._callbacks[callbackId];
+                delete callbacks[id];
             }
         }
     };
 
-    dopamine.addConstructor = function(func) {
-        try {
-            func();
-        } catch (e) {
-            console.log("Failed to run constructor: " + e);
+    /* This is a testing only API .. i think. --murph */
+    dopamine._getExecIframe = function() {
+        if (iframe) {
+            return iframe;
         }
-    };
 
-    dopamine.getExecIframe = function() {
-        if (dopamine._execIframe)
-            return dopamine._execIframe;
-
-        var iframe = document.createElement("IFRAME");
-        iframe.style.display = 'none';
+        iframe = document.createElement("IFRAME");
+        iframe.style.display = "none";
         document.body.appendChild(iframe);
-        dopamine._execIframe = iframe;
         return iframe;
     };
 
-    dopamine.iOSExec = function(success, fail, service, action, args) {
+    function iOSExec (success, fail, service, action, args) {
         try {
-            var callbackId = service + dopamine._callbackId++;
+            var thisId = service + callbackId++;
             var argsJson = JSON.stringify(args);
             if (success || fail) {
-                dopamine._callbacks[callbackId] = {success:success, fail:fail};
+                callbacks[thisId] = {success:success, fail:fail};
             }
 
-            var command = [callbackId, service, action, argsJson];
+            var command = [thisId, service, action, argsJson];
 
             // Stringify and queue the command. We stringify to command now to
             // effectively clone the command arguments in case they are mutated before
             // the command is executed.
             dopamine.__commandQueue.push(JSON.stringify(command));
 
-            dopamine.getExecIframe().src = "adrenaline://ready";
+            dopamine._getExecIframe().src = "adrenaline://ready";
         } catch (e) {
             console.log("iOSExec error: " + e);
         }
-    };
+    }
 
     dopamine.exec = function(success, fail, service, action, args) {
         if (dopamine.utils.isAdrenalineIos()) {
-            return dopamine.iOSExec(success, fail, service, action, args);
+            iOSExec(success, fail, service, action, args);
+            return;
         }
 
         try {
-            var callbackId = service + dopamine._callbackId++;
+            var newCallbackId = service + callbackId++;
             var argsJson = JSON.stringify(args);
             if (success || fail) {
-                dopamine._callbacks[callbackId] = {success:success, fail:fail};
+                callbacks[newCallbackId] = {success:success, fail:fail};
             }
 
             window._cordovaExec.exec(service, action, callbackId, argsJson);
         } catch (e) {
-            console.log("iOSExec error: " + e);
+            console.log("dopamine.exec error: " + e);
         }
     };
 
-})(jQuery);
+    return dopamine;
+
+})(this.dopamine || {}, jQuery);

@@ -12,14 +12,14 @@
  */
 
 /**
- * Class: WebPush
+ * Class: webPush
  *
  * Someone should write a class description.
  */
 
 this.dopamine = this.dopamine || {};
 
-(function($) {
+dopamine.webPush = (function (my, $) {
     var PERM_ALLOW = 0;
     var PERM_NOT_ALLOW = 1;
     var PERM_DENY = 2;
@@ -28,25 +28,29 @@ this.dopamine = this.dopamine || {};
     var PERM_CB_STR = "dopamine.webPush._requestPermissionCb";
     var PUSH_CB_STR = "dopamine.webPush._requestPushUrlCb";
 
-    /* Initializes the WebPush object.
-     * Not meant to be used except from dopamine's main constructor
-     *
-     * Must be caleld with 'new'
+    var pushUrlCbQueue;
+
+    var webPush;
+
+    /**
+     * This is a helper function to reset this object to the state it
+     * would be in when the page first loads.  It shouldn't be used by
+     * production code, only by unit tests.
      */
+    my._reset = function() {
+        localStorage.removeItem(WEBPUSH_URL_KEY);
 
-    function WebPush() {
-        if(arguments.callee._singletonInstance)
-            return arguments.callee._singletonInstance;
-        arguments.callee._singletonInstance = this;
-
-        if(typeof window.webPush !== 'undefined') {
-            this._webPush = window.webPush;
+        if (typeof window.webPush !== "undefined") {
+            webPush = window.webPush;
         } else {
-            this._webPush = null;
+            webPush = null;
         }
 
-        this._pushUrlCbQueue = [];
-    }
+        pushUrlCbQueue = [];
+    };
+
+    /* And call reset once to initialize things */
+    my._reset();
 
     /**
      * Function: requestPushUrl
@@ -63,20 +67,20 @@ this.dopamine = this.dopamine || {};
      * callback - the function that will be called with the resulting url
      *
      */
-    WebPush.prototype.requestPushUrl = function(callback) {
-        if(this.hasPush()) {
-            if(dopamine.utils.isAdrenalineIos()) {
+    my.requestPushUrl = function(callback) {
+        if (my.hasPush()) {
+            if (dopamine.utils.isAdrenalineIos()) {
                 var url = localStorage.getItem(WEBPUSH_URL_KEY);
-                if((typeof url !== 'undefined') && (url !== null) && (url !== "")) {
+                if (url) {
                     setTimeout(function() {callback(url);}, 0);
                 } else {
                     dopamine.exec(function(url) {
                         localStorage.setItem(WEBPUSH_URL_KEY, url);
                         callback(url);}, null, "WebPush", "requestPushUrl", []);
                 }
-            } else if(this._webPush !== null) {
-                this._handleCheckPermission(true);
-                this._pushUrlCbQueue.push(callback);
+            } else if (webPush !== null) {
+                handleCheckPermission(true);
+                pushUrlCbQueue.push(callback);
             }
         }
     };
@@ -90,53 +94,50 @@ this.dopamine = this.dopamine || {};
      * - True if browser supports webpush
      * - False if it doesn't
      */
-    WebPush.prototype.hasPush = function() {
-        return this._webPush !== null || dopamine.utils.isAdrenalineIos();
+    my.hasPush = function() {
+        return webPush !== null || dopamine.utils.isAdrenalineIos();
     };
 
-    WebPush.prototype._invokeCallbacks = function(url) {
-        while(this._pushUrlCbQueue.length > 0) {
-            var cb = this._pushUrlCbQueue.shift();
+    function invokeCallbacks(url) {
+        var cb;
+
+        while (pushUrlCbQueue.length > 0) {
+            cb = pushUrlCbQueue.shift();
             localStorage.setItem(WEBPUSH_URL_KEY, url);
             cb(url);
         }
+    }
+
+    my._requestPermissionCb = function() {
+        handleCheckPermission(false);
     };
 
-    WebPush.prototype._requestPermissionCb = function() {
-        this._handleCheckPermission(false);
+    my._requestPushUrlCb = function(result) {
+        invokeCallbacks(result);
     };
 
-    WebPush.prototype._requestPushUrlCb = function(result) {
-        this._invokeCallbacks(result);
-    };
-
-    WebPush.prototype._invokeInBackground = function(url) {
-        var push = this;
+    function invokeInBackground(url) {
         setTimeout(function() {
-            push._invokeCallbacks(url);
+            invokeCallbacks(url);
         }, 0);
-    };
+    }
 
-    WebPush.prototype._handleCheckPermission = function(issueRequest) {
+    function handleCheckPermission(issueRequest) {
         var url = localStorage.getItem(WEBPUSH_URL_KEY);
-        if((typeof url !== 'undefined') && (url !== null) && (url !== "")) {
-            this._invokeInBackground(url);
+        if (url) {
+            invokeInBackground(url);
             return;
         }
 
-        var perm = this._webPush.checkPermission();
-        if(perm === PERM_NOT_ALLOW) {
-            if(issueRequest) {
-                this._webPush.requestPermission(PERM_CB_STR);
+        var perm = webPush.checkPermission();
+        if (perm === PERM_NOT_ALLOW) {
+            if (issueRequest) {
+                webPush.requestPermission(PERM_CB_STR);
             }
-        } else if(perm === PERM_ALLOW) {
-            this._webPush.requestPushUrl(PUSH_CB_STR);
-        } else if(perm === PERM_DENY) {
-            this._invokeInBackground(null);
+        } else if (perm === PERM_ALLOW) {
+            webPush.requestPushUrl(PUSH_CB_STR);
         }
-    };
+    }
 
-    Object.defineProperty(dopamine, "webPush", {
-        get: function() { return new WebPush(); }
-    });
-})(jQuery);
+    return my;
+})(dopamine.webPush || {}, jQuery);

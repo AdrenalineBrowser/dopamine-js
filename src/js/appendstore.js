@@ -6,7 +6,7 @@
  */
 
 /**
- * Class: AppendStore
+ * Class: appendStore
  *
  * this class provides a thin wrapper around the Dopamine append-only
  * data structure.  It does not queue requests -- rather, it fires off
@@ -16,28 +16,17 @@
  * send notifications to listeners when a client invokes the "append"
  * function.
  *
- * Dependencies: jquery
+ * Dependencies: jQuery
  */
 
 this.dopamine = this.dopamine || {};
 
-(function($) {
-    var APPEND_PATH = "/objstore/append/append";
-    var APPEND_GET_PATH = "/objstore/append/get";
-    var APPEND_ADD_PUSH_URL_PATH = "/objstore/append/add_push_url";
-    var APPEND_REM_PUSH_URL_PATH = "/objstore/append/rem_push_url";
-
-    /* Initializes the AppendStore.
-     * Not meant to be used except from dopamine's main constructor.
-     *
-     * Must be called with 'new'
-     */
-
-    function AppendStore() {
-        if(arguments.callee._singletonInstance)
-            return arguments.callee._singletonInstance;
-        arguments.callee._singletonInstance = this;
-    }
+dopamine.appendStore = (function(my, $) {
+    my.BASE_URL = "http://release-0-2.adrenalinemobility.appspot.com/objstore/append";
+    var APPEND_PATH = "/append";
+    var APPEND_GET_PATH = "/get";
+    var APPEND_ADD_PUSH_URL_PATH = "/add_push_url";
+    var APPEND_REM_PUSH_URL_PATH = "/rem_push_url";
 
     /**
      * Function: append
@@ -52,9 +41,9 @@ this.dopamine = this.dopamine || {};
      *
      * Optional Parameters:
      *
-     * Setting "action_url", "title", and "message" will cause the
+     * Setting "actionUrl", "title", and "message" will cause the
      * server to send web push messages to anyone listening on the object,
-     * and setting my_push_url will ensure that the server does not send a
+     * and setting myPushUrl will ensure that the server does not send a
      * web push message to this browser.
      *
      * Success Callback data:
@@ -65,20 +54,20 @@ this.dopamine = this.dopamine || {};
      * appended.  For an append with values = [], start_index will be the
      * index of where the first item would have gone.
      */
-    AppendStore.prototype.append = function(key, values, successCb, errorCb,
-                                            action_url, title, message, my_push_url) {
+    my.append = function(key, values, successCb, errorCb,
+                         actionUrl, title, message, myPushUrl) {
         var data = {"key": key, "values": JSON.stringify(values)};
-        if(typeof action_url !== 'undefined') {
-            data.action_url = action_url;
+        if (actionUrl) {
+            data.actionUrl = actionUrl;
             data.title = title;
             data.message = message;
-            if(typeof my_push_url !== 'undefined' && my_push_url !== null) {
-                data.my_push_url = my_push_url;
+            if (myPushUrl) {
+                data.myPushUrl = myPushUrl;
             }
         }
 
         var request = $.ajax({
-            url: APPEND_PATH,
+            url: my.BASE_URL + APPEND_PATH,
             type: "POST",
             data: data,
             dataType: "json",
@@ -105,13 +94,13 @@ this.dopamine = this.dopamine || {};
      * >  "start_index": startIdx}
      */
 
-    AppendStore.prototype.get = function(key, startIdx, successCb, errorCb) {
-        if(typeof startIdx === 'undefined' || startIdx === null || startIdx === "") {
+    my.get = function(key, startIdx, successCb, errorCb) {
+        if (!startIdx) {
             startIdx = 0;
         }
 
         var request = $.ajax({
-            url: APPEND_GET_PATH,
+            url: my.BASE_URL + APPEND_GET_PATH,
             type: "POST",
             data: {"key": key, "start_index": startIdx},
             dataType: "json",
@@ -141,11 +130,9 @@ this.dopamine = this.dopamine || {};
      *
      * > {"return": "ok"}
      */
-    AppendStore.prototype.addPushUrl = function(key, pushUrl,
-                                                successCb, errorCb) {
-        this._addRemPushUrl(APPEND_ADD_PUSH_URL_PATH, key, pushUrl, successCb, errorCb);
+    my.addPushUrl = function(key, pushUrl, successCb, errorCb) {
+        useRemPushUrl(my.BASE_URL + APPEND_ADD_PUSH_URL_PATH, key, pushUrl, successCb, errorCb);
     };
-
 
     /**
      * Function: removePushUrl
@@ -157,7 +144,7 @@ this.dopamine = this.dopamine || {};
      *
      * Parameters:
      * key - The key that the object is stored under.
-     * pushUrl - The pushUrl that will no longer recieve notificaitons
+     * pushUrl - The pushUrl that will no longer recieve notifications
      * successCb - A callback to be called upon success
      * errorCb - A callback to be called upon failure
      *
@@ -165,14 +152,11 @@ this.dopamine = this.dopamine || {};
      *
      * > {"return": "ok"|"err_object_not_found"}
      */
-    AppendStore.prototype.removePushUrl = function(key, pushUrl,
-                                                   successCb, errorCb) {
-        this._addRemPushUrl(APPEND_REM_PUSH_URL_PATH, key, pushUrl, successCb, errorCb);
+    my.removePushUrl = function(key, pushUrl, successCb, errorCb) {
+        useRemPushUrl(my.BASE_URL + APPEND_REM_PUSH_URL_PATH, key, pushUrl, successCb, errorCb);
     };
 
-
-    AppendStore.prototype._addRemPushUrl = function(path, key, pushUrl,
-                                                    successCb, errorCb) {
+    var useRemPushUrl = function(path, key, pushUrl, successCb, errorCb) {
         var request = $.ajax({
             url: path,
             type: "POST",
@@ -183,7 +167,5 @@ this.dopamine = this.dopamine || {};
         });
     };
 
-    Object.defineProperty(dopamine, "appendStore", {
-        get: function() { return new AppendStore(); }
-    });
-})(jQuery);
+    return my;
+})(dopamine.appendStore || {}, jQuery);

@@ -6,7 +6,7 @@
  */
 
 /**
- * Class: ObjStore
+ * Class: objStore
  *
  * Dopamine's ObjStore presents a basic key/value interface.  This library will
  * store objects in localStorage immedately, and will push them to the server
@@ -29,150 +29,142 @@
 
 this.dopamine = this.dopamine || {};
 
-(function($) {
+dopamine.objStore = (function(my, $) {
     var OBJSTORE_SERVER_QUEUE = ".adrenaline.objstore.serverQueue";
     var OBJSTORE_DEVICEID = ".adrenaline.objstore.deviceid";
-    var OBJSTORE_METADATA = ".adrenaline.objstore.metadata";
+    var OBJSTORE_METADATA_VERSION = ".adrenaline.objstore.metadata.version";
     var OBJSTORE_VERSION = 1;
 
-    var OBJSTORE_POST_URL = "/objstore/set_item";
+    my.OBJSTORE_POST_URL = "http://release-0-2.adrenalinemobility.appspot.com/objstore/set_item";
 
-    /* Initializes the ObjStore.
-     * Not meant to be used except from dopamine's main constructor.
-     *
-     * Must be called with 'new'
-     */
+    var flushOnWrite = false;
+    var deviceId = null;
+    var workerRunning = false;
 
-    function ObjStore() {
-        if(arguments.callee._singletonInstance)
-            return arguments.callee._singletonInstance;
-        arguments.callee._singletonInstance = this;
+    my.onobjectposted = null;
 
-        this._flushOnWrite = false;
-        this._deviceId = null;
-        this._workerRunning = false;
-        this.onobjectposted = null;
-
-        var metadataJson = localStorage.getItem(OBJSTORE_METADATA);
-        var metadata = {};
-        if((metadataJson === null) || (typeof metadataJson === 'undefined')) {
-            this._onUpdate(0, OBJSTORE_VERSION, metadata);
-        } else {
-            metadata = JSON.parse(metadataJson);
-            if(metadata.version !== OBJSTORE_VERSION) {
-                this._onUpdate(metadata.version, OBJSTORE_VERSION, metadata);
-            }
-        }
-
-        // just in case there is any data left over
-        this._flush();
-    }
-
-
-    ObjStore.prototype._onUpdate = function(oldVersion, newVersion, metadata) {
-        // Add any fixup code for new versions here
-        if(oldVersion === 0) {
-            // update the location of deviceId on localStorage
-            var deviceId = localStorage.getItem("deviceid");
-            if(deviceId !== null) {
-                localStorage.setItem(OBJSTORE_DEVICEID, deviceId);
-                this._deviceId = null;
-            }
-
-            // copy any pending data from old queue to new one
-            var squeueJson = localStorage.getItem("adrenalineServerQueue");
-            if(squeueJson !== null) {
-                var oldSqueue = JSON.parse(squeueJson);
-                for(var idx = 0; idx < oldSqueue.length; idx++) {
-                    var item = oldSqueue[idx];
-                    this.setItem(item.key, item.value);
-                }
-            }
-        }
-
-        metadata.vesrion = newVersion;
-        var metadataJson = JSON.stringify(metadata);
-        localStorage.setItem(OBJSTORE_METADATA, metadataJson);
-    };
-
-    ObjStore.prototype._flushThread = function() {
-        var item = this._squeueFront();
-        if(item === null) {
-            this._workerRunning = false;
+    function onUpdate(oldVersion) {
+        if (oldVersion === OBJSTORE_VERSION) {
             return;
         }
 
-        this._workerRunning = true;
+        if (oldVersion > OBJSTORE_VERSION) {
+            console.log("ERROR: Object store newer than this copy of dopamine. Not proceeding.");
+            dopamine.objStore = null;
+            throw "This version of the Object Store is incompatible " +
+                "with the data stored locally. Try a newer version.";
+        }
+
+        // Add any fixup code for new versions here
+        if (oldVersion === 0) {
+            // 0 is a non-existent version representing a non-existent datastore.
+        }
+        localStorage.setItem(OBJSTORE_METADATA_VERSION, OBJSTORE_VERSION);
+    }
+
+    function flushThread() {
+        var item = squeueFront();
+        var serverQueue;
+        if (item === null) {
+            workerRunning = false;
+            return;
+        }
+
+        workerRunning = true;
 
         // prep item for ajax request
         item.value = JSON.stringify(item.value);
 
-        var objstore = this;
         var request = $.ajax({
-            url: OBJSTORE_POST_URL,
+            url: my.OBJSTORE_POST_URL,
             type: "POST",
             data: item,
             dataType: "json",
             success: function(data) {
-                if(data["return"] === "ok") {
-                    if(data.key === item.key) {
-                        objstore._squeuePop();
+                if (data["return"] === "ok") {
+                    if (data.key === item.key) {
+                        /* Remove from server queue */
+                        serverQueue = readServerQueue();
+                        serverQueue.shift();
+                        writeServerQueue(serverQueue);
                     }
-                    if(objstore.onobjectposted !== null) {
-                        objstore.onobjectposted(data.key, false);
+                    if (my.onobjectposted !== null) {
+                        my.onobjectposted(data.key, false, false);
                     }
-                    objstore._flushThread();
-                } else {
+                    flushThread();
+                    } else {
                     // server returned an error on this call
-                    if(objstore.onobjectposted !== null) {
-                        objstore.onobjectposted(data.key, true);
+                    /* DISCARD the data! Notice the 3rd parameter is true here. */
+                    serverQueue = readServerQueue();
+                    serverQueue.shift();
+                    writeServerQueue(serverQueue);
+                    workerRunning = false;
+
+                    if (my.onobjectposted !== null) {
+                        my.onobjectposted(data.key, true, true);
                     }
-                    objstore._workerRunning = false;
+
+                    flushThread();
                 }
             },
             error: function(xhr, errorType) {
                 // server or network error
-                if(objstore.onobjectposted !== null) {
-                    objstore.onobjectposted(item.key, true);
+                // It's best to do this BEFORE calling the callback.
+                workerRunning = false;
+                if (my.onobjectposted !== null) {
+                    my.onobjectposted(item.key, true, false);
                 }
-                objstore._workerRunning = false;
             }
         });
-    };
+    }
 
-    ObjStore.prototype._flush = function() {
-        if(this._workerRunning) {
+    function flush() {
+        if (workerRunning) {
             return;
         }
 
-        this._flushThread();
-    };
+        flushThread();
+    }
 
-    ObjStore.prototype._getUpdatedUuid = function(uuid) {
+    function getUpdatedUuid(uuid) {
         if (typeof uuid === "undefined") {
-            uuid = this._getDeviceId();
+            uuid = getDeviceId();
         }
 
         return uuid;
-    };
+    }
 
-    ObjStore.prototype._createLocalKey = function(key, uuid) {
-        uuid = this._getUpdatedUuid(uuid);
+    function createLocalKey(key, uuid) {
+        uuid = getUpdatedUuid(uuid);
         return uuid + "-" + key;
-    };
+    }
 
-    ObjStore.prototype._getDeviceId = function() {
-        if(this._deviceId !== null)
-            return this._deviceId;
+    /* Basically the inverse of createLocalKey */
+    /*function getBaseKey(key) {
+        return key.split("-")[1];
+    }*/
 
-        var deviceid = localStorage.getItem(OBJSTORE_DEVICEID);
-        if (deviceid === null) {
-            deviceid = dopamine.utils.getNewId();
-            localStorage.setItem(OBJSTORE_DEVICEID, deviceid);
+    function getDeviceId() {
+        if (deviceId != null) {
+            return deviceId;
         }
 
-        this._deviceId = deviceid;
-        return deviceid;
+        deviceId = localStorage.getItem(OBJSTORE_DEVICEID);
+        if (deviceId == null) {
+            deviceId = dopamine.utils.getNewId();
+            localStorage.setItem(OBJSTORE_DEVICEID, deviceId);
+        }
+
+        return deviceId;
+    }
+
+    /* Testing only */
+    my._setDeviceId = function(idVal) {
+        if (idVal != null) {
+            deviceId = idVal;
+        } else { // Setting it to null will trigger a reload from localStorage
+            deviceId = null;
+        }
     };
 
     /**
@@ -181,9 +173,13 @@ this.dopamine = this.dopamine || {};
      * Returns the UUID the objStore uses for namespacing objects
      */
 
-    ObjStore.prototype.getDefaultUuid = function() {
-        return this._getDeviceId();
-    };
+    my.getDefaultUuid = getDeviceId;
+
+    /* COMPAT for version 0.1 */
+    my._getDeviceId = getDeviceId;
+
+    /* testing only currently */
+    my._flush = flush;
 
     /**
      * Function: setItem
@@ -198,15 +194,16 @@ this.dopamine = this.dopamine || {};
      * uuid - The uuid of a specific global store to write to.
      */
 
-    ObjStore.prototype.setItem = function(key, value, uuid) {
-        var localKey = this._createLocalKey(key, uuid);
-        uuid = this._getUpdatedUuid(uuid);
+     my.setItem = function(key, value, uuid) {
+        var localKey = createLocalKey(key, uuid);
+        uuid = getUpdatedUuid(uuid);
 
         localStorage.setItem(localKey, JSON.stringify(value));
-        this._squeuePush({"key": key, "value": value, "uuid": uuid});
+        squeuePush({"key": key, "value": value, "uuid": uuid});
 
-        if(this._flushOnWrite)
-            this._flush();
+        if (flushOnWrite) {
+            flush();
+        }
     };
 
     /**
@@ -222,11 +219,11 @@ this.dopamine = this.dopamine || {};
      */
 
 
-    ObjStore.prototype.getItem = function(key, uuid) {
-        var localKey = this._createLocalKey(key, uuid);
+    my.getItem = function(key, uuid) {
+        var localKey = createLocalKey(key, uuid);
 
         var jsonValue = localStorage.getItem(localKey);
-        if((jsonValue === null) || (typeof jsonValue === 'undefined')) {
+        if (jsonValue == null) {
             return null;
         }
 
@@ -245,8 +242,8 @@ this.dopamine = this.dopamine || {};
      * uuid - The uuid of a specific global store that the key is stored under
      *
      */
-    ObjStore.prototype.removeItem = function(key, uuid) {
-        var localKey = this._createLocalKey(key, uuid);
+    my.removeItem = function(key, uuid) {
+        var localKey = createLocalKey(key, uuid);
         localStorage.removeItem(localKey);
     };
 
@@ -258,8 +255,8 @@ this.dopamine = this.dopamine || {};
      * Disables the flush on write behavior.
      */
 
-    ObjStore.prototype.disableFlushOnWrite = function() {
-        this._flushOnWrite = false;
+    my.disableFlushOnWrite = function() {
+        flushOnWrite = false;
     };
 
     /**
@@ -268,9 +265,9 @@ this.dopamine = this.dopamine || {};
      * Enables the flush on write behavior
      */
 
-    ObjStore.prototype.enableFlushOnWrite = function() {
-        this._flushOnWrite = true;
-        this._flush();
+    my.enableFlushOnWrite = function() {
+        flushOnWrite = true;
+        flush();
     };
 
     /*
@@ -306,8 +303,8 @@ this.dopamine = this.dopamine || {};
      * - False otherwise
      */
 
-    ObjStore.prototype.hasPendingData = function() {
-        return this.pendingDataCount() > 0;
+    my.hasPendingData = function() {
+        return my.pendingDataCount() > 0;
     };
 
     /**
@@ -317,62 +314,74 @@ this.dopamine = this.dopamine || {};
      * - The number of pending writes
      */
 
-    ObjStore.prototype.pendingDataCount = function() {
-        var serverQueue = this._readServerQueue();
+    my.pendingDataCount = function() {
+        var serverQueue = readServerQueue();
         return serverQueue.length;
     };
 
-    ObjStore.prototype._readServerQueue = function() {
-        ret = localStorage.getItem(OBJSTORE_SERVER_QUEUE);
-        if(ret === null)
+    function readServerQueue() {
+        var ret = localStorage.getItem(OBJSTORE_SERVER_QUEUE);
+        if (ret === null) {
             return [];
+        }
 
         return JSON.parse(ret);
-    };
+    }
 
-    ObjStore.prototype._writeServerQueue = function(q) {
+    function writeServerQueue(q) {
         localStorage.setItem(OBJSTORE_SERVER_QUEUE, JSON.stringify(q));
-    };
+    }
 
-    ObjStore.prototype._squeuePush = function(item) {
-        var serverQueue = this._readServerQueue();
+    function squeuePush(item) {
+        var serverQueue = readServerQueue();
 
         // check if the last item on the queue has the same key as this
         // push AND it hasn't been processed by the flush thread already,
         // then update the last item instead of pushing a new item
         var updated = false;
-        if(serverQueue.length >= 2) {
+        if (serverQueue.length >= 2) {
             var idx = serverQueue.length - 1;
-            if(serverQueue[idx].key === item.key && serverQueue[idx].uuid === item.uuid) {
+            if (serverQueue[idx].key === item.key && serverQueue[idx].uuid === item.uuid) {
                 serverQueue[idx].value = item.value;
                 updated = true;
             }
         }
 
-        if(!updated)
+        if (!updated) {
             serverQueue.push(item);
-        this._writeServerQueue(serverQueue);
-    };
+        }
 
-    ObjStore.prototype._squeueFront = function() {
-        var serverQueue = this._readServerQueue();
-        if(serverQueue.length === 0) {
+        writeServerQueue(serverQueue);
+    }
+
+    function squeueFront() {
+        var serverQueue = readServerQueue();
+        if (serverQueue.length === 0) {
             return null;
         }
         return serverQueue.shift();
-    };
+    }
 
-    ObjStore.prototype._squeuePop = function() {
-        var serverQueue = this._readServerQueue();
-        if(serverQueue.length === 0) {
+    /*function squeuePop() {
+        var serverQueue = readServerQueue();
+        if (serverQueue.length === 0) {
             return;
         }
 
         var item = serverQueue.shift();
-        this._writeServerQueue(serverQueue);
-    };
+        writeServerQueue(serverQueue);
+    }*/
 
-    Object.defineProperty(dopamine, "objStore", {
-        get: function() { return new ObjStore(); }
-    });
-})(jQuery);
+    function init() {
+        /* Check for old data and update if needed */
+        var version = localStorage.getItem(OBJSTORE_METADATA_VERSION);
+        onUpdate(Number(version) || 0);
+    }
+
+    dopamine._initCallbacks = dopamine._initCallbacks || $.Callbacks();
+    dopamine._initCallbacks.add(init);
+
+    init();
+
+    return my;
+})(dopamine.objStore || {}, jQuery);
